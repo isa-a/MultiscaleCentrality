@@ -42,16 +42,11 @@ class Multiscale_Centrality(object):
         self.rw_tpe = rw_tpe #type of random walk, continuous or discrete
         self.alpha = alpha # for discrete random walks
         self.rev = rev #for directed graph, reverse flow or not (False/True)
-        self.node_mask = np.ones(len(G))
 
         self.time_spectral_gap = True #set to false for no time rescaling
         
         #set the Markov time parameters
         self.graph_Laplacian()
-
-
-
-
 
         if self.time_spectral_gap:  
             print("Spectral gap = ", self.lamb_2)
@@ -65,8 +60,12 @@ class Multiscale_Centrality(object):
         #compute the centrality measures only w.r.t to a subset of nodes in target_nodes
         if len(target_nodes) == 0:
             self.target_nodes = G.nodes()
+            self.node_mask = np.ones(len(G))
         else:
             self.target_nodes = target_nodes
+            self.node_mask = np.zeros(len(G))
+            self.node_mask[target_nodes] = 1
+            
         self.n_target = len(self.target_nodes)
 
         #for discrete random walks, find the number of steps corresponding to the time
@@ -280,7 +279,8 @@ class Multiscale_Centrality(object):
 
         for tau in range(self.n_t): #for each tau
             
-            id_reachable = np.argwhere((p_t[:tau+1]*self.node_mask).max(0) > self.v + self.precision).flatten() #find reachable nodes
+            #id_reachable = np.argwhere((p_t[:tau+1]*self.node_mask).max(0) > self.v + self.precision).flatten() #find reachable nodes
+            id_reachable = np.argwhere((p_t[:tau+1]).max(0) > self.v + self.precision).flatten() #find reachable nodes
             distance = (self.t_max + 1e8)*np.ones(self.n) #set the distance to unreachable to all: (t_max+1)
             distance[id_reachable] = self.Times[np.argmax(p_t[:tau+1, id_reachable], axis=0)] #set the time for reachable nodes
 
@@ -313,7 +313,7 @@ class Multiscale_Centrality(object):
         
         if self.rw_tpe == 'discrete':
             p_t = np.array(self.Ts[:, i])
-
+        
         pair_distances = self.compute_peak_distance(p_t) 
 
         return pair_distances
@@ -332,13 +332,22 @@ class Multiscale_Centrality(object):
 
 
         with Pool(processes = self.n_processes) as p_uc:  #initialise the parallel computation
-            out = list(tqdm(p_uc.imap(self.compute_centrality_pool, np.arange(self.n)), total = self.n, disable=self.disable_tqdm))
-
+            out = list(tqdm(p_uc.imap(self.compute_centrality_pool,
+                                      self.target_nodes), 
+                                      total = self.n_target,
+                                      disable=self.disable_tqdm))
+            
+        self.out = out
         self.pair_distances = np.zeros([self.n_t, self.n, self.n])
 
-        for i in self.G:
-            self.pair_distances[:, i, :] = np.array(out[i])
-
+        for i,node in enumerate(self.target_nodes):
+            self.pair_distances[:, node, :] = np.array(out[i])
+            
+        if self.n_target < len(self.G):
+            for t in range(self.n_t):
+                self.pair_distances[t, :, :] = np.maximum( self.pair_distances[t, :, :], self.pair_distances[t, :, :].T )
+                
+                
         self.multiscale = self.compute_multiscale_centrality(self.pair_distances)
     
 
